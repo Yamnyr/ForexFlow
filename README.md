@@ -1,73 +1,100 @@
 # Projet ForexFlow : Pipeline de Suivi des Taux de Change
 
-Ce projet implémente un pipeline de données robuste avec **Apache Airflow**, **PostgreSQL** et **Pandas** pour suivre les taux de change via l'API Frankfurter.
+Ce projet implemente un pipeline de donnees avec **Apache Airflow**, **PostgreSQL**, **Pandas** et **MinIO** pour suivre les taux de change via l'API Frankfurter.
 
-## Installation & Configuration
+## Installation et Configuration
 
 ### 1. Variables Airflow
-Pour un fonctionnement optimal, configurez les variables suivantes dans l'interface Airflow (Admin -> Variables) :
+Pour un fonctionnement optimal, configurez les variables suivantes dans l'interface Airflow (`Admin -> Variables`) :
 
-| Clé | Valeur par défaut | Description |
+| Cle | Valeur par defaut | Description |
 | :--- | :--- | :--- |
-| `forex_base_currency` | `EUR` | Devise de référence. |
-| `forex_target_currencies` | `USD,GBP,JPY,CHF,CAD` | Liste des devises à suivre (min. 5). |
-| `forex_alert_threshold` | `0.05` | Seuil de variation (ex: 0.05 = 5%). |
-| `forex_freshness_threshold_days` | `1` | Nombre de jours max d'écart accepté entre la date de l'API et l'exécution. |
+| `forex_base_currency` | `EUR` | Devise de reference. |
+| `forex_target_currencies` | `USD,GBP,JPY,CHF,CAD` | Liste des devises a suivre (minimum 5). |
+| `forex_alert_threshold` | `0.05` | Seuil de variation, par exemple `0.05 = 5%`. |
+| `forex_freshness_threshold_days` | `1` | Nombre maximum de jours d'ecart accepte entre la date API et la date d'execution. |
+| `forex_minio_bucket` | `forexflow-raw` | Bucket MinIO cible pour l'archivage des donnees brutes. |
 
 ### 2. Connexion PostgreSQL
-La connexion `postgres_default` est automatiquement créée via le fichier `docker-compose.yaml`.
+La connexion `postgres_default` est creee automatiquement via le fichier `docker-compose.yaml`.
 
----
+### 3. Configuration MinIO
+Avant de lancer la stack, verifiez les variables MinIO dans le fichier `.env`.
+Pour un usage local, vous pouvez conserver les valeurs par defaut.
 
-## Explication des Choix Techniques (Data Engineering)
+| Cle | Valeur par defaut | Description |
+| :--- | :--- | :--- |
+| `MINIO_ROOT_USER` | `minioadmin` | Identifiant administrateur MinIO. |
+| `MINIO_ROOT_PASSWORD` | `minioadmin` | Mot de passe administrateur MinIO. |
+| `MINIO_BUCKET_NAME` | `forexflow-raw` | Bucket cree automatiquement au demarrage. |
+| `MINIO_REGION` | `us-east-1` | Region S3 utilisee par la connexion Airflow. |
 
-### Idempotence (Relançable à l'infini)
-- **Date-based extraction** : Le pipeline utilise la date logique du run (`ds`) pour interroger l'API. Relancer le pipeline pour la même date produira le même résultat.
-- **Contrainte d'unicité** : La table `clean_forex` possède une contrainte `UNIQUE (rate_date, base_currency, target_currency)`. L'utilisation de `ON CONFLICT DO NOTHING` garantit qu'aucun doublon n'est inséré lors des re-runs, évitant la corruption des données historiques.
+Services exposes :
 
-### Data Quality (Contrôle Qualité)
-Le pipeline implémente 3 niveaux de validation :
-1. **Structure** : Vérification de la conformité du JSON reçu.
-2. **Complétude** : On rejette la donnée si le nombre de devises est insuffisant (min 5).
-3. **Fraîcheur** : Comparaison entre la date de la donnée API et la date d'exécution. Si l'API renvoie des données trop vieilles, elles sont rejetées.
+| Service | URL | Usage |
+| :--- | :--- | :--- |
+| API S3 | `http://localhost:9000` | Endpoint pour Airflow, scripts Python, SDK AWS S3 ou `boto3`. |
+| Console Web | `http://localhost:9001` | Administration des buckets et objets. |
+| Interface Airflow | `http://localhost:8080` | Interface de pilotage du pipeline. |
 
-### Gestion des Erreurs (Cimetière de données)
-- **Table Rejects** : Les données invalides ne bloquent pas le pipeline mais sont isolées dans `rejects_forex` avec la raison du rejet pour audit.
-- **Isolation des tâches** : Chaque étape est atomique (Extraction -> Validation -> Alerting).
+Lancement :
 
-### Robustesse
-- **Retries & Timeouts** : L'extraction API possède 3 tentatives avec un délai de 5 minutes pour gérer les micro-coupures réseau.
-
----
-
-## Exploitation des Données
-
-Utilisez les vues SQL créées pour vos analyses :
-- `view_forex_evolution` : Historique complet avec calcul des variations quotidiennes.
-- `view_forex_volatility` : Statistiques de volatilité sur les 30 derniers jours.
-- `view_pipeline_health` : Rapport de monitoring (taux de succès, rejets, etc.).
-
----
-
-## Structure du Projet
-```text
-ForexFlow/
-├── dags/
-│   ├── forex_flow.py      # DAG Airflow (TaskFlow API)
-│   └── sql/
-│       ├── init_db.sql    # DDL des tables
-│       └── analysis_queries.sql # Vues métier
-└── README.md              # Documentation
+```bash
+docker compose up -d
 ```
 
----
+Le bucket `forexflow-raw` est cree automatiquement au demarrage, et la connexion Airflow `aws_minio_default` est injectee via les variables d'environnement Docker.
 
-## Exemples de Résultats
+## Choix Techniques
 
-### Données nettoyées (clean_forex)
-Voici un extrait des taux récupérés et structurés :
+### Idempotence
+- Le pipeline utilise la date logique du run (`ds`) pour interroger l'API.
+- La table `clean_forex` possede une contrainte `UNIQUE (rate_date, base_currency, target_currency)`.
+- L'utilisation de `ON CONFLICT DO NOTHING` evite les doublons lors des relances.
+
+### Data Quality
+Le pipeline implemente 3 niveaux de validation :
+1. Verification de la structure JSON recue.
+2. Verification de la completude avec un minimum de 5 devises.
+3. Verification de la fraicheur des donnees par rapport a la date d'execution.
+
+### Gestion des erreurs
+- Les donnees invalides sont stockees dans `rejects_forex` avec la raison du rejet.
+- Les taches sont decoupees en etapes atomiques : extraction, validation, alerting, archivage.
+
+### Archivage
+- Les donnees brutes sont stockees en base dans `raw_forex`.
+- Une copie JSON est archivee dans MinIO sous `raw/forex/year=YYYY/month=MM/day=DD/...`.
+
+## Exploitation des Donnees
+
+Utilisez les vues SQL creees pour vos analyses :
+- `view_forex_evolution` : historique complet avec calcul des variations quotidiennes.
+- `view_forex_volatility` : statistiques de volatilite sur les 30 derniers jours.
+- `view_pipeline_health` : rapport de monitoring du pipeline.
+
+## Structure du Projet
+
 ```text
- id | rate_date  | base_currency | target_currency |    rate    |         processed_at          
+ForexFlow/
+|-- dags/
+|   |-- forex_flow.py
+|   `-- sql/
+|       |-- init_db.sql
+|       `-- analysis_queries.sql
+|-- config/
+|-- plugins/
+|-- docker-compose.yaml
+|-- .env
+`-- README.md
+```
+
+## Exemples de Resultats
+
+### Donnees nettoyees (`clean_forex`)
+
+```text
+ id | rate_date  | base_currency | target_currency |    rate    |         processed_at
 ----+------------+---------------+-----------------+------------+-------------------------------
   1 | 2024-04-08 | EUR           | CAD             |   1.471500 | 2026-04-30 08:44:04.962189+00
   2 | 2024-04-08 | EUR           | CHF             |   0.980700 | 2026-04-30 08:44:04.962189+00
@@ -76,10 +103,10 @@ Voici un extrait des taux récupérés et structurés :
   5 | 2024-04-08 | EUR           | USD             |   1.082300 | 2026-04-30 08:44:04.962189+00
 ```
 
-### Alertes détectées (alerts_forex)
-Exemple d'alertes générées lors de variations supérieures au seuil :
+### Alertes detectees (`alerts_forex`)
+
 ```text
- id | currency_pair |  old_rate  |  new_rate  | variation_pct |        alert_timestamp        
+ id | currency_pair |  old_rate  |  new_rate  | variation_pct |        alert_timestamp
 ----+---------------+------------+------------+---------------+-------------------------------
   1 | EUR/CAD       |   1.464500 |   1.600700 |        0.0930 | 2026-04-30 08:54:16.7343+00
   2 | EUR/CHF       |   0.972500 |   0.923600 |        0.0503 | 2026-04-30 08:54:16.758701+00
