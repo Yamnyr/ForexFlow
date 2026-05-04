@@ -97,6 +97,8 @@ services:
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: airflow
       POSTGRES_DB: airflow
+    ports:
+      - "5432:5432"
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
     healthcheck:
@@ -333,6 +335,27 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+
+  streamlit:
+    image: python:3.11-slim
+    container_name: forexflow-dashboard
+    working_dir: /app
+    volumes:
+      - ./app:/app
+    environment:
+      - DB_HOST=postgres
+      - DB_NAME=airflow
+      - DB_USER=airflow
+      - DB_PASSWORD=airflow
+      - DB_PORT=5432
+    ports:
+      - "8501:8501"
+    command: >
+      sh -c "pip install -r requirements.txt &&
+             streamlit run main.py --server.port=8501 --server.address=0.0.0.0"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres-db-volume:

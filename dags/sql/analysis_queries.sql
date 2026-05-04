@@ -1,6 +1,6 @@
 -- 1. Évolution d'une devise par rapport à la base (EUR par défaut)
--- Permet de visualiser la tendance temporelle
-CREATE OR REPLACE VIEW view_forex_evolution AS
+DROP VIEW IF EXISTS view_forex_evolution;
+CREATE VIEW view_forex_evolution AS
 SELECT 
     rate_date,
     base_currency,
@@ -11,30 +11,24 @@ SELECT
 FROM clean_forex;
 
 -- 2. Volatilité et variations extrêmes
--- Identifie les devises les plus instables sur les 30 derniers jours
-CREATE OR REPLACE VIEW view_forex_volatility AS
+DROP VIEW IF EXISTS view_forex_volatility;
+CREATE VIEW view_forex_volatility AS
 SELECT 
     target_currency,
     COUNT(*) as num_points,
     MIN(rate) as min_rate,
     MAX(rate) as max_rate,
     AVG(rate) as avg_rate,
-    STDDEV(rate) as volatility_std,
-    (MAX(rate) - MIN(rate)) / MIN(rate) as max_spread_pct
+    (STDDEV(rate) / AVG(rate)) * 100 as volatility_rel_pct, -- Volatilité relative en %
+    (MAX(rate) - MIN(rate)) / MIN(rate) * 100 as max_spread_pct
 FROM clean_forex
 WHERE rate_date >= CURRENT_DATE - INTERVAL '30 days'
 GROUP BY target_currency
 HAVING COUNT(*) > 1;
 
--- 3. Top des variations quotidiennes (Requête ad-hoc)
--- Utile pour identifier rapidement les mouvements de marché importants
--- SELECT * FROM view_forex_evolution 
--- WHERE ABS(daily_return) > 0.02 
--- ORDER BY ABS(daily_return) DESC;
-
--- 4. Rapport de santé du pipeline
--- Permet de vérifier les rejets et les taux de succès
-CREATE OR REPLACE VIEW view_pipeline_health AS
+-- 3. Rapport de santé du pipeline
+DROP VIEW IF EXISTS view_pipeline_health;
+CREATE VIEW view_pipeline_health AS
 SELECT 
     execution_date::DATE as run_day,
     status,
